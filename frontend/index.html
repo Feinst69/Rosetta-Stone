@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>Machine Translation (Random Name)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-50 min-h-screen">
+    <main class="max-w-3xl mx-auto p-6">
+      <div class="bg-white shadow rounded-xl p-6 border border-gray-200">
+        <h1 class="text-3xl font-semibold mb-6">Machine Translation</h1>
+
+        <label for="source" class="block text-sm font-medium text-gray-700 mb-2">Source Text</label>
+        <textarea id="source" rows="5"
+          class="w-full p-4 rounded-md bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="Écris ce que tu veux... (le backend tirera un nom au hasard)"></textarea>
+
+        <div class="mt-4 flex items-center gap-3">
+          <button id="btn"
+            class="px-4 py-2 rounded-md text-sm font-medium bg-white border border-gray-300 hover:bg-gray-50">
+            Translate
+          </button>
+          <span id="status" class="text-sm text-gray-500"></span>
+        </div>
+
+        <h2 class="mt-6 text-sm font-medium text-gray-700">Translation</h2>
+        <pre id="out" class="mt-2 w-full p-4 rounded-md bg-gray-100 text-gray-900 whitespace-pre-wrap"></pre>
+      </div>
+    </main>
+
+    <script>
+      // Modifie l’URL si ton API est déployée ailleurs
+      const API_URL = "http://127.0.0.1:8000/pick";
+
+      const $ = (sel) => document.querySelector(sel);
+      const source = $("#source");
+      const out = $("#out");
+      const btn = $("#btn");
+      const status = $("#status");
+
+      btn.addEventListener("click", async () => {
+        const text = source.value.trim();
+
+        btn.disabled = true;
+        status.textContent = "⏳ Requête...";
+        out.textContent = "";
+
+        try {
+          const res = await fetch(API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text })
+          });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const data = await res.json();
+          out.textContent = data.name ?? "(Aucun nom)";
+          status.textContent = "✅ OK";
+        } catch (err) {
+          status.textContent = "❌ Erreur";
+          out.textContent = err.message;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
