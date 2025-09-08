@@ -2,63 +2,64 @@
 <html lang="fr">
   <head>
     <meta charset="utf-8" />
-    <title>Machine Translation (Random Name)</title>
+    <title>Name Checker</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="bg-gray-50 min-h-screen">
-    <main class="max-w-3xl mx-auto p-6">
+    <main class="max-w-2xl mx-auto p-6">
       <div class="bg-white shadow rounded-xl p-6 border border-gray-200">
-        <h1 class="text-3xl font-semibold mb-6">Machine Translation</h1>
+        <h1 class="text-2xl font-semibold mb-6">Name Checker</h1>
 
-        <label for="source" class="block text-sm font-medium text-gray-700 mb-2">Source Text</label>
-        <textarea id="source" rows="5"
-          class="w-full p-4 rounded-md bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Écris ce que tu veux... (le backend tirera un nom au hasard)"></textarea>
+        <label for="name" class="block text-sm font-medium text-gray-700 mb-2">Nom à vérifier</label>
+        <input id="name" type="text" class="w-full p-3 rounded-md bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+               placeholder="Ex. Chloé" />
 
         <div class="mt-4 flex items-center gap-3">
-          <button id="btn"
-            class="px-4 py-2 rounded-md text-sm font-medium bg-white border border-gray-300 hover:bg-gray-50">
-            Translate
+          <button id="btn" class="px-4 py-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700">
+            Vérifier
           </button>
           <span id="status" class="text-sm text-gray-500"></span>
         </div>
 
-        <h2 class="mt-6 text-sm font-medium text-gray-700">Translation</h2>
-        <pre id="out" class="mt-2 w-full p-4 rounded-md bg-gray-100 text-gray-900 whitespace-pre-wrap"></pre>
+        <h2 class="mt-6 text-sm font-medium text-gray-700">Résultat</h2>
+        <div id="out" class="mt-2 w-full p-3 rounded-md bg-gray-100 text-gray-900"></div>
       </div>
     </main>
 
     <script>
-      // Modifie l’URL si ton API est déployée ailleurs
-      const API_URL = "http://127.0.0.1:8000/pick";
+      const API = "http://127.0.0.1:8000/check"; // change si déployé ailleurs
 
-      const $ = (sel) => document.querySelector(sel);
-      const source = $("#source");
-      const out = $("#out");
-      const btn = $("#btn");
-      const status = $("#status");
+      const nameInput = document.getElementById("name");
+      const out = document.getElementById("out");
+      const btn = document.getElementById("btn");
+      const status = document.getElementById("status");
 
       btn.addEventListener("click", async () => {
-        const text = source.value.trim();
+        const name = nameInput.value.trim();
+        if (!name) {
+          out.textContent = "";
+          status.textContent = "Entrez un nom.";
+          return;
+        }
 
         btn.disabled = true;
-        status.textContent = "⏳ Requête...";
+        status.textContent = "⏳ Vérification...";
         out.textContent = "";
 
         try {
-          const res = await fetch(API_URL, {
+          const res = await fetch(API, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text })
+            body: JSON.stringify({ name })
           });
           if (!res.ok) throw new Error("HTTP " + res.status);
           const data = await res.json();
-          out.textContent = data.name ?? "(Aucun nom)";
-          status.textContent = "✅ OK";
+          out.textContent = data.exists ? "✅ Nom trouvé" : "❌ Nom absent";
+          status.textContent = "OK";
         } catch (err) {
-          status.textContent = "❌ Erreur";
           out.textContent = err.message;
+          status.textContent = "Erreur";
         } finally {
           btn.disabled = false;
         }

@@ -1,39 +1,27 @@
+from contextlib import asynccontextmanager
+from typing import List, Set
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from pathlib import Path
-from contextlib import asynccontextmanager
-import random
 
-# Dossier contenant tes fichiers de noms
-NAMES_DIR = Path(__file__).parent / "data" / "names"
-ALL_NAMES: list[str] = []
+from .utils import load_names, build_index, name_exists, NAME_FILE
 
-# Fonction utilitaire : charge tous les noms
-def load_names() -> list[str]:
-    names = []
-    if NAMES_DIR.exists():
-        for txt in NAMES_DIR.glob("*.txt"):
-            with open(txt, "r", encoding="utf-8") as f:
-                for line in f:
-                    name = line.strip()
-                    if name:
-                        names.append(name)
-    return names or ["Alice", "Bob", "Charlie", "Dora"]  # fallback si vide
+ALL_NAMES: List[str] = []
+NAMES_INDEX: Set[str] = set()
 
-# Lifespan (remplace on_event)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global ALL_NAMES
+    global ALL_NAMES, NAMES_INDEX
     ALL_NAMES = load_names()
-    print(f"✅ {len(ALL_NAMES)} noms chargés depuis {NAMES_DIR}")
+    NAMES_INDEX = build_index(ALL_NAMES)
+    print(f"✅ {len(ALL_NAMES)} noms chargés depuis {NAME_FILE}")
     yield
-    print("👋 Application arrêtée")
+    print("👋 App arrêtée")
 
-# Création de l’app
-app = FastAPI(title="Random Name API", lifespan=lifespan)
+app = FastAPI(title="Name Checker API", lifespan=lifespan)
 
-# Autoriser CORS (dev : * ; en prod -> mettre l’URL de ton front)
+# CORS (ouvert en dev ; en prod → restreindre à ton domaine front)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,14 +30,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modèles I/O
-class AskRequest(BaseModel):
-    text: str
-
-class NameResponse(BaseModel):
+class NameRequest(BaseModel):
     name: str
 
-# Endpoint
-@app.post("/pick", response_model=NameResponse)
-def pick_name(_: AskRequest):
-    return NameResponse(name=random.choice(ALL_NAMES))
+class CheckResponse(BaseModel):
+    exists: bool
+
+@app.post("/check", response_model=CheckResponse)
+def check_name(req: NameRequest) -> CheckResponse:
+    """Vérifie si le nom est présent dans data/raw/name.txt."""
+    return CheckResponse(exists=name_exists(req.name, NAMES_INDEX))
+
+@app.get("/health")
+def health():
+    return {"ok": True, "count": len(ALL_NAMES)}
