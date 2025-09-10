@@ -24,7 +24,7 @@ app = FastAPI(title="Name Checker API", lifespan=lifespan)
 # CORS (ouvert en dev ; en prod → restreindre à ton domaine front)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[f"https://feinst.pythonanywhere.com",],  # ou ["*"] en dev
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
