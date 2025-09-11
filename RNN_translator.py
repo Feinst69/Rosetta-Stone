@@ -11,6 +11,9 @@ import pickle
 import warnings
 import os
 from itertools import product
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 warnings.filterwarnings('ignore')
 
 class RNNTranslator:
@@ -235,7 +238,7 @@ class RNNTranslator:
         print(f"Model built with {self.model.count_params():,} parameters")
         return self.model
     
-    def train_model(self, epochs=50, batch_size=64, patience=5):
+    def train_model(self, epochs=50, batch_size=512, patience=5):
         """
         Train the RNN model
         """
@@ -354,8 +357,60 @@ class RNNTranslator:
         
         return decoded_tokens
 
+def plot_training_history(history, config_params, config_num, save_dir='rnn_training_plots'):
+    """
+    Plot and save training history for a configuration
+    
+    Parameters:
+    - history: Training history object
+    - config_params: Configuration parameters dictionary
+    - config_num: Configuration number
+    - save_dir: Directory to save plots
+    """
+    # Create directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Create figure with subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+    
+    # Plot accuracy
+    ax1.plot(history.history['accuracy'], label='Training Accuracy', marker='o')
+    ax1.plot(history.history['val_accuracy'], label='Validation Accuracy', marker='s')
+    ax1.set_title(f'Model Accuracy - Config {config_num}')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Accuracy')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot loss
+    ax2.plot(history.history['loss'], label='Training Loss', marker='o')
+    ax2.plot(history.history['val_loss'], label='Validation Loss', marker='s')
+    ax2.set_title(f'Model Loss - Config {config_num}')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Loss')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # Add configuration details as text
+    config_text = "\n".join([f"{k}: {v}" for k, v in config_params.items()])
+    plt.figtext(0.02, 0.02, f"Config {config_num}:\n{config_text}", 
+                fontsize=8, verticalalignment='bottom')
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    filename = f"config_{config_num:02d}_"
+    filename += "_".join([f"{k}{v}" for k, v in config_params.items()])
+    filename = filename.replace(".", "_") + ".png"
+    
+    filepath = os.path.join(save_dir, filename)
+    plt.savefig(filepath, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"   📊 Training plot saved: {filepath}")
+
 def grid_search_rnn(df_tokens, param_grid, validation_size=1000, test_size=0.2, 
-                   epochs=20, patience=3, n_best=3):
+                   epochs=20, patience=3, n_best=3, save_plots=True):
     """
     Perform grid search for RNN hyperparameters
     
@@ -367,6 +422,7 @@ def grid_search_rnn(df_tokens, param_grid, validation_size=1000, test_size=0.2,
     - epochs: Maximum epochs per configuration
     - patience: Early stopping patience
     - n_best: Number of best configurations to return
+    - save_plots: Whether to save training plots for each configuration
     
     Returns:
     - List of best configurations with their performance metrics
@@ -406,6 +462,10 @@ def grid_search_rnn(df_tokens, param_grid, validation_size=1000, test_size=0.2,
             # Evaluate model
             test_loss, test_accuracy = rnn.evaluate_model()
             
+            # Save training plot if requested
+            if save_plots:
+                plot_training_history(history, params, i+1)
+            
             # Store results
             result = {
                 'params': params.copy(),
@@ -414,7 +474,8 @@ def grid_search_rnn(df_tokens, param_grid, validation_size=1000, test_size=0.2,
                 'val_loss': min(history.history['val_loss']),
                 'val_accuracy': max(history.history['val_accuracy']),
                 'epochs_trained': len(history.history['loss']),
-                'total_params': rnn.model.count_params()
+                'total_params': rnn.model.count_params(),
+                'history': history.history if save_plots else None  # Store history for later analysis
             }
             results.append(result)
             
@@ -448,7 +509,73 @@ def grid_search_rnn(df_tokens, param_grid, validation_size=1000, test_size=0.2,
         print(f"  Total Parameters: {result['total_params']:,}")
         print(f"  Epochs Trained: {result['epochs_trained']}")
     
+    # Create comparison plot if plots were saved
+    if save_plots and results:
+        create_comparison_plot(results[:n_best])
+    
     return results[:n_best]
+
+def create_comparison_plot(results, save_dir='rnn_training_plots'):
+    """
+    Create a comparison plot of the best configurations
+    """
+    if not results:
+        return
+        
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    
+    # Plot test accuracy comparison
+    configs = [f"Config {i+1}" for i in range(len(results))]
+    test_accs = [r['test_accuracy'] for r in results]
+    val_accs = [r['val_accuracy'] for r in results]
+    
+    x_pos = np.arange(len(configs))
+    width = 0.35
+    
+    bars1 = ax1.bar(x_pos - width/2, test_accs, width, label='Test Accuracy', alpha=0.8)
+    bars2 = ax1.bar(x_pos + width/2, val_accs, width, label='Validation Accuracy', alpha=0.8)
+    
+    ax1.set_xlabel('Configuration')
+    ax1.set_ylabel('Accuracy')
+    ax1.set_title('Test vs Validation Accuracy Comparison')
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels(configs, rotation=45)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Add value labels on bars
+    for bar in bars1:
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + 0.001,
+                f'{height:.3f}', ha='center', va='bottom', fontsize=8)
+    for bar in bars2:
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + 0.001,
+                f'{height:.3f}', ha='center', va='bottom', fontsize=8)
+    
+    # Plot parameter count vs accuracy
+    param_counts = [r['total_params'] for r in results]
+    ax2.scatter(param_counts, test_accs, s=100, alpha=0.7, label='Test Accuracy')
+    ax2.scatter(param_counts, val_accs, s=100, alpha=0.7, label='Validation Accuracy')
+    
+    for i, (params, test_acc, val_acc) in enumerate(zip(param_counts, test_accs, val_accs)):
+        ax2.annotate(f'Config {i+1}', (params, test_acc), xytext=(5, 5), 
+                    textcoords='offset points', fontsize=8)
+    
+    ax2.set_xlabel('Total Parameters')
+    ax2.set_ylabel('Accuracy')
+    ax2.set_title('Parameters vs Accuracy')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # Save comparison plot
+    filepath = os.path.join(save_dir, 'grid_search_comparison.png')
+    plt.savefig(filepath, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"\n📊 Comparison plot saved: {filepath}")
 
 def test_rnn_translation(rnn, df_tokens, n_examples=5):
     """

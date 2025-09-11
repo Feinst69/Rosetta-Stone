@@ -10,7 +10,7 @@ MODEL_CONFIG = {
     'dropout_rate': 0.2,
     
     # Training Parameters
-    'batch_size': 64,
+    'batch_size': 512,               # Increased from 256
     'epochs': 18,                   # Increased from 10
     'patience': 10,                 # Increased from 3
     'learning_rate': 0.001,
