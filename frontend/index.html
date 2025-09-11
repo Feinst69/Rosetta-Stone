@@ -1,69 +1,49 @@
-<!doctype html>
-<html lang="fr">
-  <head>
-    <meta charset="utf-8" />
-    <title>Name Checker</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script src="https://cdn.tailwindcss.com"></script>
-  </head>
-  <body class="bg-gray-50 min-h-screen">
-    <main class="max-w-2xl mx-auto p-6">
-      <div class="bg-white shadow rounded-xl p-6 border border-gray-200">
-        <h1 class="text-2xl font-semibold mb-6">Name Checker</h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Machine Translation</title>
+</head>
+<body>
+  <div style="max-width:600px;margin:24px auto;border:1px solid #ddd;border-radius:8px;padding:16px;font-family:sans-serif;">
+    <h1 style="margin-top:0;">Machine Translation</h1>
+    <label for="src">Source Text</label><br>
+    <textarea id="src" style="width:100%;min-height:100px;background:#eef2f7;border:1px solid #ddd;border-radius:4px;"></textarea><br>
+    <button id="btn" style="margin-top:8px;padding:6px 12px;">Translate</button>
+    <div style="margin-top:16px;">
+      <label for="dst">Translation</label><br>
+      <div id="dst" style="width:100%;min-height:60px;background:#f9f9fb;border:1px solid #ddd;border-radius:4px;padding:6px;"></div>
+    </div>
+  </div>
 
-        <label for="name" class="block text-sm font-medium text-gray-700 mb-2">Nom à vérifier</label>
-        <input id="name" type="text" class="w-full p-3 rounded-md bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-               placeholder="Ex. Chloé" />
+  <script>
+    const API_URL = "http://localhost:8000/translate"; // URL de ton API
 
-        <div class="mt-4 flex items-center gap-3">
-          <button id="btn" class="px-4 py-2 rounded-md text-sm font-medium bg-blue-600 text-white hover:bg-blue-700">
-            Vérifier
-          </button>
-          <span id="status" class="text-sm text-gray-500"></span>
-        </div>
-
-        <h2 class="mt-6 text-sm font-medium text-gray-700">Résultat</h2>
-        <div id="out" class="mt-2 w-full p-3 rounded-md bg-gray-100 text-gray-900"></div>
-      </div>
-    </main>
-
-    <script>
-      const API = "http://feinst.pythonanywhere.com/check"; // change si déployé ailleurs
-
-      const nameInput = document.getElementById("name");
-      const out = document.getElementById("out");
-      const btn = document.getElementById("btn");
-      const status = document.getElementById("status");
-
-      btn.addEventListener("click", async () => {
-        const name = nameInput.value.trim();
-        if (!name) {
-          out.textContent = "";
-          status.textContent = "Entrez un nom.";
-          return;
-        }
-
-        btn.disabled = true;
-        status.textContent = "⏳ Vérification...";
-        out.textContent = "";
-
-        try {
-          const res = await fetch(API, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name })
-          });
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          const data = await res.json();
-          out.textContent = data.exists ? "✅ Nom trouvé" : "❌ Nom absent";
-          status.textContent = "OK";
-        } catch (err) {
-          out.textContent = err.message;
-          status.textContent = "Erreur";
-        } finally {
-          btn.disabled = false;
-        }
+    async function callAPI(text){
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text })
       });
-    </script>
-  </body>
+      if (!res.ok) { throw new Error("Error: " + res.status); }
+      return res.json();
+    }
+
+    document.getElementById("btn").addEventListener("click", async () => {
+      const src = document.getElementById("src");
+      const dst = document.getElementById("dst");
+      dst.textContent = "";
+      const value = src.value.trim();
+      if (!value) return;
+      try {
+        const data = await callAPI(value);
+        const out = Array.isArray(data.translations) ? data.translations.join("\n") : data.translations;
+        dst.textContent = out;
+      } catch (e) {
+        dst.textContent = e.message;
+      }
+    });
+  </script>
+</body>
 </html>
