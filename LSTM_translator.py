@@ -638,11 +638,31 @@ class LSTMTranslator:
         """
         print("Building inference models...")
         
-        # Get encoder input and LSTM layer
-        encoder_inputs = self.model.input[0]  # First input (encoder)
-        encoder_lstm = self.model.get_layer('encoder_lstm')
+        # For complex architectures (bidirectional + attention), building separate inference models
+        # is very complex. For now, skip and use the main model for translation.
+        if self.use_bidirectional or self.use_attention:
+            print("⚠️  Complex architecture detected (bidirectional/attention).")
+            print("Skipping inference model building - use main model for translation.")
+            self.encoder_model = None
+            self.decoder_model = None
+            return
         
-        # Build encoder model - need to recreate the encoder path
+        # Get encoder input and determine the correct layer name based on configuration
+        encoder_inputs = self.model.input[0]  # First input (encoder)
+        encoder_layer_name = 'encoder_lstm'
+            
+        try:
+            encoder_lstm = self.model.get_layer(encoder_layer_name)
+        except ValueError:
+            print(f"⚠️  Could not find layer '{encoder_layer_name}'. Available layers:")
+            for layer in self.model.layers:
+                print(f"    - {layer.name}")
+            print("Skipping inference model building - use main model for translation.")
+            self.encoder_model = None
+            self.decoder_model = None
+            return
+        
+        # Build encoder model for simple architecture only
         encoder_embedding = Embedding(
             self.fr_vocab_size, 
             self.embedding_dim, 
@@ -689,8 +709,17 @@ class LSTMTranslator:
         """
         Translate a list of French tokens to English tokens
         """
+        # For complex architectures (bidirectional/attention), use main model
+        if self.use_bidirectional or self.use_attention:
+            return self._translate_with_main_model(fr_tokens)
+        
+        # For simple architectures, use separate encoder/decoder models
         if self.encoder_model is None or self.decoder_model is None:
             self.build_inference_models()
+        
+        if self.encoder_model is None or self.decoder_model is None:
+            # Fallback to main model if inference models couldn't be built
+            return self._translate_with_main_model(fr_tokens)
         
         # Convert tokens to sequence
         seq = [self.fr_word_to_idx.get(token, self.fr_word_to_idx['<unk>']) for token in fr_tokens]
@@ -725,6 +754,45 @@ class LSTMTranslator:
             
             # Update states
             states_value = [h, c]
+        
+        return decoded_tokens
+    
+    def _translate_with_main_model(self, fr_tokens):
+        """
+        Translate using the main model for complex architectures (bidirectional/attention)
+        Uses greedy search with sequential prediction
+        """
+        # Convert French tokens to sequence
+        fr_seq = [self.fr_word_to_idx.get(token, self.fr_word_to_idx['<unk>']) for token in fr_tokens]
+        encoder_input = pad_sequences([fr_seq], maxlen=self.max_seq_length, padding='post', truncating='post')
+        
+        # Start with <start> token
+        start_token = self.en_word_to_idx.get('<start>', 1)
+        decoder_input = np.array([[start_token]])
+        
+        decoded_tokens = []
+        
+        for _ in range(self.max_seq_length):
+            # Predict next token using main model
+            predictions = self.model.predict([encoder_input, decoder_input], verbose=0)
+            
+            # Get the predicted token (greedy search - take most likely)
+            predicted_id = np.argmax(predictions[0, -1, :])
+            predicted_token = self.en_idx_to_word.get(predicted_id, '<unk>')
+            
+            # Stop if we hit end token or padding
+            if predicted_token in ['<end>', '<pad>']:
+                break
+            
+            # Add to decoded tokens if it's a real word
+            if predicted_token not in ['<start>', '<unk>']:
+                decoded_tokens.append(predicted_token)
+            
+            # Update decoder input for next iteration - append new token
+            new_decoder_input = np.zeros((1, decoder_input.shape[1] + 1))
+            new_decoder_input[0, :-1] = decoder_input[0]
+            new_decoder_input[0, -1] = predicted_id
+            decoder_input = new_decoder_input
         
         return decoded_tokens
     
