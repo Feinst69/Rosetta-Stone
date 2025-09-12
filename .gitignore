@@ -18,3 +18,8 @@ data/
 # Modèles
 *.h5
 *.keras
+
+*.h5
+lstm_translator_main.h5
+__pycache__/
+*.ipynb_checkpoints

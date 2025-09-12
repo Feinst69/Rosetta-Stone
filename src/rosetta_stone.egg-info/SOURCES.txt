@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+src/helper.py
+src/main.py
+src/proj_tests.py
+src/project_tests.py
+src/utils.py
+src/rosetta_stone.egg-info/PKG-INFO
+src/rosetta_stone.egg-info/SOURCES.txt
+src/rosetta_stone.egg-info/dependency_links.txt
+src/rosetta_stone.egg-info/requires.txt
+src/rosetta_stone.egg-info/top_level.txt
