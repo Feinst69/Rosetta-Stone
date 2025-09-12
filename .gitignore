@@ -1,1 +1,20 @@
-*/__pycache__/
+# Environnements Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Données volumineuses
+data/
+*.csv
+*.tsv
+
+# Modèles
+*.h5
+*.keras
