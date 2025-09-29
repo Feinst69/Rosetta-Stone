@@ -14,7 +14,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
 from nltk.tokenize import word_tokenize
-from model.config import get_config
+from config import get_config
 warnings.filterwarnings('ignore')
 
 class LSTMTranslator:
