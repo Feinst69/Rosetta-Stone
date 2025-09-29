@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout, Bidirectional, Attention, AdditiveAttention, Concatenate, Dot, Lambda, Softmax
+from tensorflow.keras.layers import Input, GRU, Dense, Embedding, Dropout, Bidirectional, Attention, AdditiveAttention, Concatenate, Dot, Lambda, Softmax
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -14,10 +14,10 @@ from nltk.tokenize import word_tokenize
 from config import get_config
 warnings.filterwarnings('ignore')
 
-class LSTMTranslator:
+class GRUTranslator:
     def __init__(self, config=None, **kwargs):
         """
-        Initialize the LSTM Translator with configuration
+        Initialize the GRU Translator with configuration
         
         Parameters:
         - config: Configuration dictionary (if None, uses default config)
@@ -98,113 +98,81 @@ class LSTMTranslator:
 
             # Hyphen in compound words: no spaces around it
             # Em dash (—) or en dash (–): space before and after for sentence breaks
-            if text.find("-") != -1:
-                # First handle spaced dashes (likely sentence breaks)
-                text = text.replace(" - ", " — ")  # Convert to em dash
-                text = text.replace(" -", " —").replace("- ", "— ")
-                
-                # Replace em dashes back to spaced format
-                text = text.replace("—", " — ")
-                
-                # Clean up multiple spaces around em dashes
-                text = re.sub(r'\s*—\s*', ' — ', text)
-            
-            # Comma: no space before, one space after
-            if text.find(",") != -1:
-                text = text.replace(" ,", ",")
-                # Add space after comma if not already there
-                text = re.sub(r',(?!\s)', ', ', text)
-                # Fix multiple spaces after comma
-                text = text.replace(",  ", ", ")
+            text = re.sub(r'(\w)–(\w)', r'\1–\2', text)  # No space around en-dash in compounds
+            text = re.sub(r'(\w)—(\w)', r'\1—\2', text)  # No space around em-dash in compounds
 
-            # Period: no space before, one space after (except end of text)
-            if text.find(".") != -1:
-                text = text.replace(" .", ".")
-                # Add space after period if not already there and not at end
-                text = re.sub(r'\.(?!\s|$)', '. ', text)
-                # Fix multiple spaces after period
-                text = text.replace(".  ", ". ")
-            
-            # Semicolon: no space before, one space after
-            if text.find(";") != -1:
-                text = text.replace(" ;", ";")
-                text = re.sub(r';(?!\s)', '; ', text)
-                text = text.replace(";  ", "; ")
-            
-            # Colon: no space before, one space after
-            if text.find(":") != -1:
-                text = text.replace(" :", ":")
-                text = re.sub(r':(?!\s)', ': ', text)
-                text = text.replace(":  ", ": ")
-            
-            # Question mark: no space before, one space after
-            if text.find("?") != -1:
-                text = text.replace(" ?", "?")
-                text = re.sub(r'\?(?!\s|$)', '? ', text)
-                text = text.replace("?  ", "? ")
-            
-            # Exclamation mark: no space before, one space after
-            if text.find("!") != -1:
-                text = text.replace(" !", "!")
-                text = re.sub(r'!(?!\s|$)', '! ', text)
-                text = text.replace("!  ", "! ")
-            
-            # Opening parenthesis: one space before (if not at start), no space after
-            if text.find("(") != -1:
-                text = re.sub(r'(?<!\s)(?<!^)\(', ' (', text)  # Add space before if not already there
-                text = text.replace("( ", "(")  # Remove space after
-                text = text.replace("  (", " (")  # Fix double spaces
-            
-            # Closing parenthesis: no space before, one space after (if not at end)
-            if text.find(")") != -1:
-                text = text.replace(" )", ")")
-                text = re.sub(r'\)(?!\s|$|[.,;:!?])', ') ', text)  # Add space after unless at end or before punctuation
-                text = text.replace(")  ", ") ")
-            
-            # Clean up any multiple spaces
-            text = re.sub(r'\s+', ' ', text)
-            
-            return text.strip()
+            # Comma, semicolon, colon: no space before, one space after
+            text = re.sub(r'\s*([,;:])\s*', r'\1 ', text)
 
-        # Basic text cleaning
-        text = text.strip()
+            # Period: no space before, one space after (except at end)
+            text = re.sub(r'\s*\.\s*(?!\s*$)', r'. ', text)
+
+            # Question and exclamation marks: space before and after (French style)
+            text = re.sub(r'\s*\?\s*', r' ? ', text)
+            text = re.sub(r'\s*!\s*', r' ! ', text)
+
+            # Opening parentheses/brackets: space before, no space after
+            text = re.sub(r'\s*([(\[])\s*', r' \1', text)
+            # Closing parentheses/brackets: no space before, space after
+            text = re.sub(r'\s*([)\]])\s*', r'\1 ', text)
+
+            # Opening quotes: space before, no space after
+            text = re.sub(r'\s*([«"])\s*', r' \1', text)
+            # Closing quotes: no space before, space after
+            text = re.sub(r'\s*([»"])\s*', r'\1 ', text)
+
+            # Clean up multiple spaces
+            text = re.sub(r'\s+', ' ', text).strip()
+
+            return text
+
+        # Apply punctuation spacing fixes
         text = fix_punctuation_spacing(text)
 
         # Tokenize using NLTK
-        word_tokens = word_tokenize(text, language='french')
-        
-        # Filter tokens with length > 1
-        word_tokens = [wt for wt in word_tokens if len(wt) > 1]
-        
-        return word_tokens
-    
-    def prepare_data_from_text(self, df_text, validation_size=1000, test_size=0.2, random_state=42):
+        tokens = word_tokenize(text.lower())
+
+        return tokens
+
+    def preprocess_data(self, fr_texts, en_texts, remove_stopwords=False, use_tfidf=False, 
+                       min_freq=2, max_seq_length=None):
         """
-        Prepare data from raw text dataframe by applying preprocessing
+        Preprocess French and English text data for training
         
         Parameters:
-        - df_text: DataFrame with columns ['text_fr', 'text_en']
-        - validation_size: Number of samples for validation
-        - test_size: Proportion for test set
-        - random_state: Random seed
+        - fr_texts: List of French text strings
+        - en_texts: List of English text strings  
+        - remove_stopwords: Whether to remove stopwords
+        - use_tfidf: Whether to use TF-IDF for feature extraction
+        - min_freq: Minimum frequency for word inclusion
+        - max_seq_length: Override default max sequence length
         
         Returns:
-        - Processed train/test/validation datasets with tokens
+        - DataFrame with tokenized pairs
         """
-        print("Processing raw text data...")
+        print("Preprocessing text data...")
         
-        # Create copy and apply preprocessing
-        df_processed = df_text.copy()
+        if max_seq_length:
+            self.max_seq_length = max_seq_length
         
-        # Apply French preprocessing
-        df_processed['tokens_fr'] = df_processed['text_fr'].apply(
-            lambda x: self.preprocess_french_phrase(x)
-        )
+        # Preprocess all French texts
+        fr_tokens_list = []
+        for text in fr_texts:
+            tokens = self.preprocess_french_phrase(text)
+            fr_tokens_list.append(tokens)
         
-        # Apply English preprocessing (same logic but for English)
-        df_processed['tokens_en'] = df_processed['text_en'].apply(
-            lambda x: word_tokenize(x.strip(), language='english')
-        ).apply(lambda x: [wt for wt in x if len(wt) > 1])
+        # Preprocess English texts (simpler preprocessing)
+        en_tokens_list = []
+        for text in en_texts:
+            # Basic tokenization for English
+            tokens = word_tokenize(text.lower())
+            en_tokens_list.append(tokens)
+        
+        # Create DataFrame
+        df_processed = pd.DataFrame({
+            'tokens_fr': fr_tokens_list,
+            'tokens_en': en_tokens_list
+        })
         
         # Filter out empty token lists
         df_processed = df_processed[
@@ -260,110 +228,124 @@ class LSTMTranslator:
         print(f"Validation set: {len(df_val)}")
         
         return df_train, df_test, df_val
-    
-    def build_vocabularies(self, df_train):
+
+    def build_vocabularies(self, train_data):
         """
-        Build vocabularies from training data tokens
+        Build French and English vocabularies from training data with special tokens
         """
         print("Building vocabularies...")
         
+        # Special tokens that must be first in vocabulary
+        special_tokens = ['<pad>', '<unk>', '<start>', '<end>']
+        
         # Collect all French tokens
         all_fr_tokens = []
-        for tokens in df_train['tokens_fr']:
+        for tokens in train_data['tokens_fr']:
             all_fr_tokens.extend(tokens)
         
-        # Collect all English tokens (with markers)
+        # Count frequencies and get most common tokens
+        fr_token_counts = pd.Series(all_fr_tokens).value_counts()
+        
+        # Build French vocabulary: special tokens + most frequent
+        top_fr_tokens = list(fr_token_counts.head(self.max_vocab_size - len(special_tokens)).index)
+        fr_vocab = special_tokens + top_fr_tokens
+        
+        self.fr_word_to_idx = {word: idx for idx, word in enumerate(fr_vocab)}
+        self.fr_idx_to_word = {idx: word for word, idx in self.fr_word_to_idx.items()}
+        self.fr_vocab_size = len(fr_vocab)
+        
+        # Collect all English tokens (using the version with start/end tokens)
         all_en_tokens = []
-        for tokens in df_train['tokens_en_with_markers']:
+        for tokens in train_data['tokens_en_with_markers']:
             all_en_tokens.extend(tokens)
         
-        # Count frequencies and create vocabularies
-        from collections import Counter
+        # Count frequencies and get most common tokens
+        en_token_counts = pd.Series(all_en_tokens).value_counts()
         
-        fr_counter = Counter(all_fr_tokens)
-        en_counter = Counter(all_en_tokens)
+        # Build English vocabulary: special tokens + most frequent
+        top_en_tokens = list(en_token_counts.head(self.max_vocab_size - len(special_tokens)).index)
+        # Remove special tokens from top_tokens if they appear (they're already included)
+        top_en_tokens = [token for token in top_en_tokens if token not in special_tokens]
+        en_vocab = special_tokens + top_en_tokens
         
-        # Keep most common words
-        fr_most_common = fr_counter.most_common(self.max_vocab_size - 2)  # -2 for <pad> and <unk>
-        en_most_common = en_counter.most_common(self.max_vocab_size - 2)
-        
-        # Create word-to-index mappings
-        self.fr_word_to_idx = {'<pad>': 0, '<unk>': 1}
-        self.fr_word_to_idx.update({word: i+2 for i, (word, _) in enumerate(fr_most_common)})
-        
-        self.en_word_to_idx = {'<pad>': 0, '<unk>': 1}
-        self.en_word_to_idx.update({word: i+2 for i, (word, _) in enumerate(en_most_common)})
-        
-        # Create index-to-word mappings
-        self.fr_idx_to_word = {idx: word for word, idx in self.fr_word_to_idx.items()}
+        self.en_word_to_idx = {word: idx for idx, word in enumerate(en_vocab)}
         self.en_idx_to_word = {idx: word for word, idx in self.en_word_to_idx.items()}
-        
-        self.fr_vocab_size = len(self.fr_word_to_idx)
-        self.en_vocab_size = len(self.en_word_to_idx)
+        self.en_vocab_size = len(en_vocab)
         
         print(f"French vocabulary size: {self.fr_vocab_size}")
         print(f"English vocabulary size: {self.en_vocab_size}")
-    
-    def tokens_to_sequences(self, tokens_list, word_to_idx):
-        """
-        Convert list of token lists to sequences of indices
-        """
-        sequences = []
-        for tokens in tokens_list:
-            seq = [word_to_idx.get(token, word_to_idx['<unk>']) for token in tokens]
-            sequences.append(seq)
-        return sequences
-    
+
     def prepare_sequences(self, df_train, df_test, df_val):
         """
-        Convert tokens to padded sequences
+        Convert tokens to sequences and create training data
         """
         print("Converting tokens to sequences...")
         
-        # Convert to sequences
-        X_train = self.tokens_to_sequences(df_train['tokens_fr'], self.fr_word_to_idx)
-        y_train = self.tokens_to_sequences(df_train['tokens_en_with_markers'], self.en_word_to_idx)
+        def tokens_to_sequences(tokens_list, word_to_idx):
+            sequences = []
+            for tokens in tokens_list:
+                seq = [word_to_idx.get(token, word_to_idx['<unk>']) for token in tokens]
+                sequences.append(seq)
+            return sequences
         
-        X_test = self.tokens_to_sequences(df_test['tokens_fr'], self.fr_word_to_idx)
-        y_test = self.tokens_to_sequences(df_test['tokens_en_with_markers'], self.en_word_to_idx)
+        # Convert training data
+        encoder_input_train = pad_sequences(
+            tokens_to_sequences(df_train['tokens_fr'], self.fr_word_to_idx),
+            maxlen=self.max_seq_length, padding='post', truncating='post'
+        )
+        decoder_input_train = pad_sequences(
+            tokens_to_sequences(df_train['tokens_en_with_markers'], self.en_word_to_idx),
+            maxlen=self.max_seq_length, padding='post', truncating='post'
+        )
+        # Target is decoder input shifted by one position (for teacher forcing)
+        decoder_target_train = pad_sequences(
+            tokens_to_sequences([tokens[1:] + ['<end>'] for tokens in df_train['tokens_en_with_markers']], self.en_word_to_idx),
+            maxlen=self.max_seq_length, padding='post', truncating='post'
+        )
         
-        X_val = self.tokens_to_sequences(df_val['tokens_fr'], self.fr_word_to_idx)
-        y_val = self.tokens_to_sequences(df_val['tokens_en_with_markers'], self.en_word_to_idx)
+        # Convert validation data
+        encoder_input_val = pad_sequences(
+            tokens_to_sequences(df_val['tokens_fr'], self.fr_word_to_idx),
+            maxlen=self.max_seq_length, padding='post', truncating='post'
+        )
+        decoder_input_val = pad_sequences(
+            tokens_to_sequences(df_val['tokens_en_with_markers'], self.en_word_to_idx),
+            maxlen=self.max_seq_length, padding='post', truncating='post'
+        )
+        decoder_target_val = pad_sequences(
+            tokens_to_sequences([tokens[1:] + ['<end>'] for tokens in df_val['tokens_en_with_markers']], self.en_word_to_idx),
+            maxlen=self.max_seq_length, padding='post', truncating='post'
+        )
         
-        # Pad sequences
-        X_train = pad_sequences(X_train, maxlen=self.max_seq_length, padding='post', truncating='post')
-        y_train = pad_sequences(y_train, maxlen=self.max_seq_length+1, padding='post', truncating='post')
-        
-        X_test = pad_sequences(X_test, maxlen=self.max_seq_length, padding='post', truncating='post')
-        y_test = pad_sequences(y_test, maxlen=self.max_seq_length+1, padding='post', truncating='post')
-        
-        X_val = pad_sequences(X_val, maxlen=self.max_seq_length, padding='post', truncating='post')
-        y_val = pad_sequences(y_val, maxlen=self.max_seq_length+1, padding='post', truncating='post')
-        
-        # Prepare decoder inputs and targets
-        decoder_input_train = y_train[:, :-1]
-        decoder_target_train = y_train[:, 1:]
-        
-        decoder_input_test = y_test[:, :-1]
-        decoder_target_test = y_test[:, 1:]
-        
-        decoder_input_val = y_val[:, :-1]
-        decoder_target_val = y_val[:, 1:]
+        # Convert test data
+        encoder_input_test = pad_sequences(
+            tokens_to_sequences(df_test['tokens_fr'], self.fr_word_to_idx),
+            maxlen=self.max_seq_length, padding='post', truncating='post'
+        )
+        decoder_target_test = pad_sequences(
+            tokens_to_sequences([tokens[1:] + ['<end>'] for tokens in df_test['tokens_en_with_markers']], self.en_word_to_idx),
+            maxlen=self.max_seq_length, padding='post', truncating='post'
+        )
         
         return {
-            'X_train': X_train, 'decoder_input_train': decoder_input_train, 'decoder_target_train': decoder_target_train,
-            'X_test': X_test, 'decoder_input_test': decoder_input_test, 'decoder_target_test': decoder_target_test,
-            'X_val': X_val, 'decoder_input_val': decoder_input_val, 'decoder_target_val': decoder_target_val
+            'encoder_input_train': encoder_input_train,
+            'decoder_input_train': decoder_input_train,
+            'decoder_target_train': decoder_target_train,
+            'encoder_input_val': encoder_input_val,
+            'decoder_input_val': decoder_input_val,
+            'decoder_target_val': decoder_target_val,
+            'encoder_input_test': encoder_input_test,
+            'decoder_target_test': decoder_target_test
         }
-    
+
     def build_model(self):
         """
-        Build the sequence-to-sequence LSTM model with attention and bidirectional options
+        Build the sequence-to-sequence GRU model with attention and bidirectional options
         """
         print(f"Building the model with attention={self.use_attention}, bidirectional={self.use_bidirectional}...")
         
         # Encoder
-        encoder_inputs = Input(shape=(self.max_seq_length,), name='encoder_inputs')
+        encoder_inputs = Input(shape=(None,), name='encoder_inputs')
         encoder_embedding = Embedding(
             self.fr_vocab_size, 
             self.embedding_dim, 
@@ -372,37 +354,35 @@ class LSTMTranslator:
         )(encoder_inputs)
         encoder_embedding = Dropout(self.dropout_rate)(encoder_embedding)
         
-        # Create LSTM layer
-        encoder_lstm_layer = LSTM(
+        # Create GRU layer
+        encoder_gru_layer = GRU(
             self.hidden_units, 
             return_sequences=True if self.use_attention else False,
             return_state=True, 
             dropout=self.dropout_rate,
             recurrent_dropout=self.dropout_rate,
-            name='encoder_lstm'
+            name='encoder_gru'
         )
         
         # Apply bidirectional wrapper if enabled
         if self.use_bidirectional:
             # Use merge_mode=None to get separate forward/backward states
-            encoder_lstm_layer = Bidirectional(
-                encoder_lstm_layer, 
+            encoder_gru_layer = Bidirectional(
+                encoder_gru_layer, 
                 merge_mode=None,
                 name='bidirectional_encoder'
             )
             
-            # Bidirectional LSTM with return_sequences=True and return_state=True returns:
-            # [forward_output, backward_output, forward_h, forward_c, backward_h, backward_c]
-            bidirectional_results = encoder_lstm_layer(encoder_embedding)
+            # Bidirectional GRU with return_sequences=True and return_state=True returns:
+            # [forward_output, backward_output, forward_h, backward_h] - NO CELL STATES
+            bidirectional_results = encoder_gru_layer(encoder_embedding)
             
             if self.use_attention:
                 # Extract outputs and states
                 forward_output = bidirectional_results[0]
                 backward_output = bidirectional_results[1] 
-                forward_h = bidirectional_results[2]
-                forward_c = bidirectional_results[3]
-                backward_h = bidirectional_results[4]
-                backward_c = bidirectional_results[5]
+                forward_h = bidirectional_results[2]  # No forward_c for GRU
+                backward_h = bidirectional_results[3]  # No backward_c for GRU
                 
                 # Concatenate forward and backward outputs for attention
                 concat_layer = Concatenate(axis=-1, name='encoder_outputs_concat')
@@ -413,26 +393,22 @@ class LSTMTranslator:
                 encoder_outputs = encoder_projection(encoder_outputs_raw)
             else:
                 # Extract only states (no outputs needed)
-                forward_h = bidirectional_results[2]
-                forward_c = bidirectional_results[3]
-                backward_h = bidirectional_results[4]
-                backward_c = bidirectional_results[5]
+                forward_h = bidirectional_results[2]  # No forward_c for GRU
+                backward_h = bidirectional_results[3]  # No backward_c for GRU
                 encoder_outputs = None
             
             # Project concatenated states back to hidden_units size using Concatenate layer
             concat_h = Concatenate(axis=-1, name='state_h_concat')([forward_h, backward_h])
-            concat_c = Concatenate(axis=-1, name='state_c_concat')([forward_c, backward_c])
             
             state_h = Dense(self.hidden_units, activation='tanh', name='state_h_projection')(concat_h)
-            state_c = Dense(self.hidden_units, activation='tanh', name='state_c_projection')(concat_c)
-            encoder_states = [state_h, state_c]
+            encoder_states = [state_h]  # Single state for GRU
         else:
             if self.use_attention:
-                encoder_outputs, state_h, state_c = encoder_lstm_layer(encoder_embedding)
+                encoder_outputs, state_h = encoder_gru_layer(encoder_embedding)  # No state_c for GRU
             else:
-                _, state_h, state_c = encoder_lstm_layer(encoder_embedding)
+                _, state_h = encoder_gru_layer(encoder_embedding)  # No state_c for GRU
                 encoder_outputs = None
-            encoder_states = [state_h, state_c]
+            encoder_states = [state_h]  # Single state for GRU
         
         # Decoder
         decoder_inputs = Input(shape=(None,), name='decoder_inputs')
@@ -445,15 +421,15 @@ class LSTMTranslator:
         decoder_embedding_layer = decoder_embedding(decoder_inputs)
         decoder_embedding_layer = Dropout(self.dropout_rate)(decoder_embedding_layer)
         
-        decoder_lstm = LSTM(
+        decoder_gru = GRU(
             self.hidden_units, 
             return_sequences=True, 
             return_state=True,
             dropout=self.dropout_rate,
             recurrent_dropout=self.dropout_rate,
-            name='decoder_lstm'
+            name='decoder_gru'
         )
-        decoder_outputs, _, _ = decoder_lstm(decoder_embedding_layer, initial_state=encoder_states)
+        decoder_outputs, _ = decoder_gru(decoder_embedding_layer, initial_state=encoder_states[0])  # Single state for GRU
         
         # Add attention mechanism if enabled
         if self.use_attention and encoder_outputs is not None:
@@ -499,139 +475,61 @@ class LSTMTranslator:
         
         print(f"Model built with {self.model.count_params():,} parameters")
         return self.model
-    
-    def train(self, data_dict, batch_size=None, epochs=None, patience=None):
+
+    def train(self, data_dict):
         """
-        Train the model using configuration parameters
-        
-        Parameters:
-        - data_dict: Dictionary containing training data
-        - batch_size: Batch size for training (uses config if None)
-        - epochs: Maximum number of epochs to train (uses config if None)
-        - patience: Number of epochs with no improvement after which training will be stopped (uses config if None)
+        Train the GRU model with data dictionary and configuration-based parameters
         """
-        # Use config values if parameters not provided
-        batch_size = batch_size or self.batch_size
-        epochs = epochs or self.epochs
-        patience = patience or self.patience
+        print("Starting training...")
         
-        print(f"Starting training for maximum {epochs} epochs with patience {patience}...")
-        print(f"Using batch_size={batch_size}, attention={self.use_attention}, bidirectional={self.use_bidirectional}")
-        print(f"Teacher forcing={self.use_teacher_forcing}, scheduled_sampling={self.use_scheduled_sampling}")
+        # Create callbacks
+        callbacks = []
         
-        # Training callbacks
-        callbacks = [
-            tf.keras.callbacks.EarlyStopping(
-                monitor='val_loss',
-                patience=patience,
-                restore_best_weights=True,
-                verbose=1,
-                min_delta=0.001
+        # Early stopping
+        early_stopping = tf.keras.callbacks.EarlyStopping(
+            monitor='val_loss',
+            patience=self.patience,
+            restore_best_weights=True,
+            verbose=1
+        )
+        callbacks.append(early_stopping)
+        
+        # Learning rate reduction
+        lr_reduce = tf.keras.callbacks.ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=self.lr_reduce_factor,
+            patience=self.lr_reduce_patience,
+            min_lr=self.min_lr,
+            verbose=1
+        )
+        callbacks.append(lr_reduce)
+        
+        # Train the model
+        history = self.model.fit(
+            [data_dict['encoder_input_train'], data_dict['decoder_input_train']], 
+            data_dict['decoder_target_train'],
+            batch_size=self.batch_size,
+            epochs=self.epochs,
+            validation_data=(
+                [data_dict['encoder_input_val'], data_dict['decoder_input_val']], 
+                data_dict['decoder_target_val']
             ),
-            tf.keras.callbacks.ReduceLROnPlateau(
-                monitor='val_loss',
-                factor=self.lr_reduce_factor,
-                patience=self.lr_reduce_patience,
-                min_lr=self.min_lr,
-                verbose=1,
-                min_delta=0.001
-            )
-        ]
+            callbacks=callbacks,
+            verbose=1
+        )
         
-        # Determine training mode
-        if not self.use_teacher_forcing:
-            print("Using free running mode (no teacher forcing)...")
-            history = self._train_free_running(data_dict, batch_size, epochs, callbacks)
-        elif self.use_scheduled_sampling:
-            print("Using scheduled sampling training...")
-            history = self._train_with_scheduled_sampling(data_dict, batch_size, epochs, callbacks)
-        else:
-            print("Using standard teacher forcing...")
-            # Standard training with teacher forcing
-            history = self.model.fit(
-                [data_dict['X_train'], data_dict['decoder_input_train']],
-                data_dict['decoder_target_train'],
-                batch_size=batch_size,
-                epochs=epochs,
-                validation_data=(
-                    [data_dict['X_val'], data_dict['decoder_input_val']], 
-                    data_dict['decoder_target_val']
-                ),
-                callbacks=callbacks,
-                verbose=1
-            )
-        
-        # Evaluate on test set
+        # Evaluate on test data
         test_loss, test_accuracy = self.model.evaluate(
-            [data_dict['X_test'], data_dict['decoder_input_test']], 
-            data_dict['decoder_target_test'], 
+            [data_dict['encoder_input_test'], data_dict['decoder_target_test'][:, :-1]], 
+            data_dict['decoder_target_test'][:, 1:],
             verbose=0
         )
-        print(f"\nTest Loss: {test_loss:.4f}")
+        
+        print(f"Test Loss: {test_loss:.4f}")
         print(f"Test Accuracy: {test_accuracy:.4f}")
         
         return history
-    
-    def _train_free_running(self, data_dict, batch_size, epochs, callbacks):
-        """
-        Train without teacher forcing - decoder uses its own predictions
-        """
-        print("Note: Free running mode uses simplified approach.")
-        print("Decoder receives <start> token only, must generate entire sequence.")
-        
-        # For free running, we modify the input data
-        # Create decoder inputs with only start tokens
-        start_token_idx = self.en_word_to_idx['<start>']
-        
-        # Prepare free running decoder inputs (just start token)
-        decoder_input_train_free = np.full((len(data_dict['X_train']), 1), start_token_idx)
-        decoder_input_val_free = np.full((len(data_dict['X_val']), 1), start_token_idx)
-        decoder_input_test_free = np.full((len(data_dict['X_test']), 1), start_token_idx)
-        
-        # Build a different model for free running if needed
-        print("Training in free running mode - this is much more challenging!")
-        
-        # Use standard training but with modified inputs
-        history = self.model.fit(
-            [data_dict['X_train'], decoder_input_train_free],
-            data_dict['decoder_target_train'],
-            batch_size=batch_size,
-            epochs=epochs,
-            validation_data=(
-                [data_dict['X_val'], decoder_input_val_free], 
-                data_dict['decoder_target_val']
-            ),
-            callbacks=callbacks,
-            verbose=1
-        )
-        
-        return history
-    
-    def _train_with_scheduled_sampling(self, data_dict, batch_size, epochs, callbacks):
-        """
-        Custom training loop with scheduled sampling
-        """
-        # For simplicity, fall back to standard training but with a note
-        # Full scheduled sampling requires custom training loops which are complex
-        print("Note: Scheduled sampling is enabled but using simplified version.")
-        print("For full scheduled sampling, consider using a custom training loop.")
-        
-        # Use standard training for now
-        history = self.model.fit(
-            [data_dict['X_train'], data_dict['decoder_input_train']],
-            data_dict['decoder_target_train'],
-            batch_size=batch_size,
-            epochs=epochs,
-            validation_data=(
-                [data_dict['X_val'], data_dict['decoder_input_val']], 
-                data_dict['decoder_target_val']
-            ),
-            callbacks=callbacks,
-            verbose=1
-        )
-        
-        return history
-    
+
     def build_inference_models(self):
         """
         Build inference models for translation
@@ -649,10 +547,10 @@ class LSTMTranslator:
         
         # Get encoder input and determine the correct layer name based on configuration
         encoder_inputs = self.model.input[0]  # First input (encoder)
-        encoder_layer_name = 'encoder_lstm'
+        encoder_layer_name = 'encoder_gru'
             
         try:
-            encoder_lstm = self.model.get_layer(encoder_layer_name)
+            encoder_gru = self.model.get_layer(encoder_layer_name)
         except ValueError:
             print(f"⚠️  Could not find layer '{encoder_layer_name}'. Available layers:")
             for layer in self.model.layers:
@@ -672,31 +570,30 @@ class LSTMTranslator:
         encoder_embedded = encoder_embedding(encoder_inputs)
         encoder_embedded = Dropout(self.dropout_rate)(encoder_embedded)
         
-        _, encoder_state_h, encoder_state_c = encoder_lstm(encoder_embedded)
-        encoder_states = [encoder_state_h, encoder_state_c]
+        _, encoder_state_h = encoder_gru(encoder_embedded)  # Single state for GRU
+        encoder_states = [encoder_state_h]  # Single state for GRU
         
         self.encoder_model = Model(encoder_inputs, encoder_states)
         
         # Decoder model for inference
         decoder_state_input_h = Input(shape=(self.hidden_units,), name='decoder_state_h')
-        decoder_state_input_c = Input(shape=(self.hidden_units,), name='decoder_state_c')
-        decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+        decoder_states_inputs = [decoder_state_input_h]  # Single input for GRU
         
         decoder_inputs = Input(shape=(1,), name='decoder_inputs_inference')
         
         # Get layers from trained model
         decoder_embedding = self.model.get_layer('decoder_embedding')
-        decoder_lstm = self.model.get_layer('decoder_lstm')
+        decoder_gru = self.model.get_layer('decoder_gru')
         decoder_dense = self.model.get_layer('decoder_dense')
         
         # Build decoder inference path
         decoder_embedding_layer = decoder_embedding(decoder_inputs)
         decoder_embedding_layer = Dropout(self.dropout_rate)(decoder_embedding_layer)
         
-        decoder_outputs, state_h, state_c = decoder_lstm(
+        decoder_outputs, state_h = decoder_gru(  # Single state output for GRU
             decoder_embedding_layer, initial_state=decoder_states_inputs
         )
-        decoder_states = [state_h, state_c]
+        decoder_states = [state_h]  # Single state for GRU
         
         decoder_outputs = decoder_dense(decoder_outputs)
         
@@ -725,8 +622,8 @@ class LSTMTranslator:
         seq = [self.fr_word_to_idx.get(token, self.fr_word_to_idx['<unk>']) for token in fr_tokens]
         input_seq = pad_sequences([seq], maxlen=self.max_seq_length, padding='post', truncating='post')
         
-        # Encode the input sequence
-        states_value = self.encoder_model.predict(input_seq, verbose=0)
+        # Encode the input sequence (returns single state for GRU)
+        state_value = self.encoder_model.predict(input_seq, verbose=0)
         
         # Generate empty target sequence of length 1
         target_seq = np.zeros((1, 1))
@@ -736,7 +633,7 @@ class LSTMTranslator:
         decoded_tokens = []
         
         for _ in range(self.max_seq_length):
-            output_tokens, h, c = self.decoder_model.predict([target_seq] + states_value, verbose=0)
+            output_tokens, h = self.decoder_model.predict([target_seq, state_value], verbose=0)  # Single state for GRU
             
             # Sample a token
             sampled_token_index = np.argmax(output_tokens[0, -1, :])
@@ -745,15 +642,15 @@ class LSTMTranslator:
             if sampled_word == '<end>' or sampled_word == '<pad>':
                 break
                 
-            if sampled_word != '<start>' and sampled_word != '<unk>':
+            if sampled_word not in ['<start>', '<unk>']:
                 decoded_tokens.append(sampled_word)
             
             # Update target sequence
             target_seq = np.zeros((1, 1))
             target_seq[0, 0] = sampled_token_index
             
-            # Update states
-            states_value = [h, c]
+            # Update states (single state for GRU)
+            state_value = [h]
         
         return decoded_tokens
     
@@ -801,45 +698,30 @@ class LSTMTranslator:
         Translate a full French sentence to English with validation
         
         Parameters:
-        - french_sentence: String containing French text
+        - french_sentence: French text string to translate
         
         Returns:
-        - List of English tokens if successful, False if validation fails
+        - English translation string
         """
-        try:
-            # Preprocess the French sentence
-            french_tokens = self.preprocess_french_phrase(french_sentence)
-            
-            # Check if sentence is too long
-            if len(french_tokens) > self.max_seq_length:
-                print(f"Error: Sentence too long. Got {len(french_tokens)} tokens, maximum allowed is {self.max_seq_length}")
-                return False
-            
-            # Check if vocabularies are loaded
-            if self.fr_word_to_idx is None:
-                print("Error: French vocabulary not loaded. Model needs to be trained or loaded first.")
-                return False
-            
-            # Check for unknown words
-            unknown_words = []
-            for token in french_tokens:
-                if token not in self.fr_word_to_idx:
-                    unknown_words.append(token)
-            
-            if unknown_words:
-                print(f"Error: Unknown words not in vocabulary: {unknown_words}")
-                return False
-            
-            # If all checks pass, translate the tokens
-            english_tokens = self.translate_tokens(french_tokens)
-            
-            return english_tokens
-            
-        except Exception as e:
-            print(f"Error: An unexpected error occurred during translation: {str(e)}")
-            return False
-    
-    def save_model(self, model_path='lstm_translator'):
+        # Preprocess the sentence to tokens
+        fr_tokens = self.preprocess_french_phrase(french_sentence)
+        
+        # Validate input
+        if not fr_tokens or all(token in ['<pad>', '<unk>'] for token in fr_tokens):
+            return "Unable to translate - no valid tokens found"
+        
+        # Translate tokens
+        en_tokens = self.translate_tokens(fr_tokens)
+        
+        if not en_tokens:
+            return "No translation generated"
+        
+        # Join tokens back to sentence
+        translation = ' '.join(en_tokens)
+        
+        return translation
+
+    def save_model(self, model_path='gru_translator'):
         """
         Save the complete model and vocabularies
         """
@@ -862,20 +744,16 @@ class LSTMTranslator:
             'en_idx_to_word': self.en_idx_to_word,
             'fr_vocab_size': self.fr_vocab_size,
             'en_vocab_size': self.en_vocab_size,
-            'max_seq_length': self.max_seq_length,
-            'embedding_dim': self.embedding_dim,
-            'hidden_units': self.hidden_units,
-            'dropout_rate': self.dropout_rate
+            'config': self.config
         }
         
-        # Save model data using pickle
         with open(f'{model_path}_data.pkl', 'wb') as f:
             pickle.dump(model_data, f)
         
         print("Model saved successfully!")
-    
+
     @classmethod
-    def load_model(cls, model_path='lstm_translator'):
+    def load_model(cls, model_path='gru_translator'):
         """
         Load a saved model
         """
@@ -884,18 +762,9 @@ class LSTMTranslator:
         # Load model data
         with open(f'{model_path}_data.pkl', 'rb') as f:
             model_data = pickle.load(f)
-
-        print("Model PreLoaded Successfully!")
         
         # Create instance
-        translator = cls(
-            max_seq_length=model_data['max_seq_length'],
-            embedding_dim=model_data['embedding_dim'],
-            hidden_units=model_data['hidden_units'],
-            dropout_rate=model_data['dropout_rate']
-        )
-
-        print("Translator instance created.")
+        translator = cls(config=model_data['config'])
         
         # Set vocabularies
         translator.fr_word_to_idx = model_data['fr_word_to_idx']
@@ -904,8 +773,6 @@ class LSTMTranslator:
         translator.en_idx_to_word = model_data['en_idx_to_word']
         translator.fr_vocab_size = model_data['fr_vocab_size']
         translator.en_vocab_size = model_data['en_vocab_size']
-
-        print("Vocabularies loaded.")
         
         # Load models with custom objects
         custom_objects = {
@@ -916,14 +783,10 @@ class LSTMTranslator:
         }
         
         try:
-            print("Loading main model from path ...")
             translator.model = tf.keras.models.load_model(
                 f'{model_path}_main.h5', 
                 custom_objects=custom_objects
             )
-
-            print("Main model loaded successfully.")
-
         except Exception as e:
             print(f"Error loading main model: {e}")
             print("Rebuilding model from scratch...")
@@ -961,7 +824,7 @@ def train_translator_from_tokens(df_tokens, validation_size=None, config_overrid
     - config_overrides: Dictionary to override specific config parameters
     
     Returns:
-    - Trained LSTMTranslator instance
+    - Trained GRUTranslator instance
     """
     # Load configuration and apply overrides
     config = get_config()
@@ -971,7 +834,7 @@ def train_translator_from_tokens(df_tokens, validation_size=None, config_overrid
         config['validation_size'] = validation_size
     
     # Initialize translator with configuration
-    translator = LSTMTranslator(config=config)
+    translator = GRUTranslator(config=config)
     
     print("=== Training Configuration ===")
     print(f"Embedding Dim: {translator.embedding_dim}")
@@ -1004,25 +867,21 @@ def train_translator_from_tokens(df_tokens, validation_size=None, config_overrid
     
     return translator, history
 
-def load_translator_for_inference(model_path='lstm_translator'):
+def load_translator_for_inference(model_path='gru_translator'):
     """
-    Load a trained model for inference only
+    Load a trained translator for inference only
     """
-    return LSTMTranslator.load_model(model_path)
+    return GRUTranslator.load_model(model_path)
 
-# Quick test function
 def test_translation(translator, df_tokens, n_examples=5):
     """
-    Test the translator on random examples
+    Test the translator with sample translations
     """
-    print("\n" + "="*60)
+    print("="*60)
     print("TESTING TRANSLATIONS")
     print("="*60)
     
-    # Sample random examples
-    test_indices = np.random.choice(len(df_tokens), min(n_examples, len(df_tokens)))
-    
-    for i in test_indices:
+    for i in range(min(n_examples, len(df_tokens))):
         fr_tokens = df_tokens.iloc[i]['tokens_fr']
         true_en_tokens = df_tokens.iloc[i]['tokens_en']
         
@@ -1030,10 +889,4 @@ def test_translation(translator, df_tokens, n_examples=5):
         
         print(f"\nFrench tokens: {fr_tokens}")
         print(f"True English: {true_en_tokens}")
-        print(f"Predicted: {predicted_tokens}")
-        print("-" * 50)
-
-# Usage example:
-# translator, history = train_translator_from_tokens(df_tokens, validation_size=1000)
-# translator.save_model('my_translator')
-# test_translation(translator, df_tokens)
+        print(f"Predicted: {predicted_tokens if predicted_tokens else '[No translation]'}")
