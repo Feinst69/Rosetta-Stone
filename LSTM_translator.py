@@ -1,4 +1,10 @@
 import numpy as np
+import os
+import pickle
+import warnings
+import re
+from copy import deepcopy
+
 import pandas as pd
 import tensorflow as tf
 from tensorflow.keras.models import Model
@@ -6,9 +12,6 @@ from tensorflow.keras.layers import Input, LSTM, Dense, Embedding, Dropout, Bidi
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
-import pickle
-import warnings
-import re
 import nltk
 from nltk.tokenize import word_tokenize
 from config import get_config
@@ -865,7 +868,8 @@ class LSTMTranslator:
             'max_seq_length': self.max_seq_length,
             'embedding_dim': self.embedding_dim,
             'hidden_units': self.hidden_units,
-            'dropout_rate': self.dropout_rate
+            'dropout_rate': self.dropout_rate,
+            'config': deepcopy(self.config)
         }
         
         # Save model data using pickle
@@ -887,13 +891,19 @@ class LSTMTranslator:
 
         print("Model PreLoaded Successfully!")
         
-        # Create instance
-        translator = cls(
-            max_seq_length=model_data['max_seq_length'],
-            embedding_dim=model_data['embedding_dim'],
-            hidden_units=model_data['hidden_units'],
-            dropout_rate=model_data['dropout_rate']
-        )
+        # Create instance with stored configuration (fallback to legacy fields if needed)
+        stored_config = model_data.get('config')
+        if stored_config is not None:
+            translator = cls(config=deepcopy(stored_config))
+        else:
+            legacy_config = get_config()
+            legacy_config.update({
+                'max_seq_length': model_data['max_seq_length'],
+                'embedding_dim': model_data['embedding_dim'],
+                'hidden_units': model_data['hidden_units'],
+                'dropout_rate': model_data['dropout_rate']
+            })
+            translator = cls(config=legacy_config)
 
         print("Translator instance created.")
         
@@ -907,46 +917,27 @@ class LSTMTranslator:
 
         print("Vocabularies loaded.")
         
-        # Load models with custom objects
-        custom_objects = {
-            'NotEqual': tf.not_equal,
-            'Equal': tf.equal,
-            'ReduceSum': tf.reduce_sum,
-            'Cast': tf.cast
-        }
-        
-        try:
-            print("Loading main model from path ...")
-            translator.model = tf.keras.models.load_model(
-                f'{model_path}_main.h5', 
-                custom_objects=custom_objects
+        print("Rebuilding model architecture...")
+        translator.build_model()
+
+        weights_path = f'{model_path}_main.h5'
+        if not os.path.exists(weights_path):
+            raise FileNotFoundError(
+                f"Weights file '{weights_path}' not found. Retrain the model or provide the correct path."
             )
 
-            print("Main model loaded successfully.")
-
-        except Exception as e:
-            print(f"Error loading main model: {e}")
-            print("Rebuilding model from scratch...")
-            translator.build_model()
-            # Try to load weights only
-            try:
-                translator.model.load_weights(f'{model_path}_main.h5')
-            except:
-                raise Exception("Could not load model or weights. Please retrain the model.")
-        
+        print(f"Loading weights from {weights_path}...")
         try:
-            translator.encoder_model = tf.keras.models.load_model(
-                f'{model_path}_encoder.h5',
-                custom_objects=custom_objects
-            )
-            translator.decoder_model = tf.keras.models.load_model(
-                f'{model_path}_decoder.h5',
-                custom_objects=custom_objects
-            )
-        except:
-            print("Inference models not found or corrupted, will build when needed.")
-            translator.build_inference_models()
-        
+            translator.model.load_weights(weights_path)
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not load weights for the LSTM translator. "
+                "Ensure the checkpoint matches the saved configuration and vocabulary."
+            ) from exc
+
+        print("Weights loaded successfully. Building inference helpers...")
+        translator.build_inference_models()
+
         print("Model loaded successfully!")
         return translator
 

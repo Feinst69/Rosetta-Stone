@@ -11,8 +11,8 @@ MODEL_CONFIG = {
     
     # Training Parameters
     'batch_size': 512,               # Increased from 256
-    'epochs': 18,                   # Increased from 10
-    'patience': 10,                 # Increased from 3
+    'epochs': 2,                   # Increased from 10
+    'patience': 1,                 # Increased from 3
     'learning_rate': 0.001,
     'min_lr': 0.0001,
     'lr_reduce_factor': 0.5,
