@@ -4,9 +4,9 @@
 MODEL_CONFIG = {
     # Basic Architecture
     'max_seq_length': 50,
-    'embedding_dim': 512,           # Increased from 256
-    'hidden_units': 1024,           # Increased from 512  
-    'max_vocab_size': 50000,        # Increased from 20000
+    'embedding_dim': 128,           # Increased from 256
+    'hidden_units': 64,           # Increased from 512  
+    'max_vocab_size': 500,        # Increased from 20000
     'dropout_rate': 0.2,
     
     # Training Parameters
