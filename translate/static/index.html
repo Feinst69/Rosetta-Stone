@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FR → EN • Traduction</title>
+  <style>
+    :root { --bg:#0b1020; --card:#111833; --muted:#9aa3b2; --accent:#4f8ef7; }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#e8edf5;}
+    .wrap{max-width:820px;margin:40px auto;padding:0 16px}
+    .card{background:var(--card);border:1px solid #1d2547;border-radius:14px;padding:18px;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+    h1{margin:0 0 12px;font-size:22px;font-weight:700}
+    label{display:block;margin:10px 0 6px;color:#cbd5e1;font-size:14px}
+    textarea{width:100%;min-height:120px;border-radius:12px;border:1px solid #2a3565;background:#0f1530;color:#e8edf5;padding:12px;resize:vertical}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+    button{background:var(--accent);border:0;color:#fff;padding:10px 14px;border-radius:10px;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .out{background:#0f1530;border:1px solid #2a3565;border-radius:12px;padding:12px;min-height:64px;white-space:pre-wrap}
+    .meta{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;color:var(--muted);font-size:13px}
+    code{background:#0b122a;border:1px solid #1d2547;border-radius:8px;padding:2px 6px}
+    .err{color:#fda4af}
+    .spinner{display:inline-block;width:16px;height:16px;border-radius:50%;border:2px solid #b6c3d6;border-top-color:transparent;animation:spin .7s linear infinite;vertical-align:middle;margin-left:8px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .hint{color:var(--muted);font-size:12px;margin-top:6px}
+    .pill{border:1px solid #2a3565;border-radius:999px;padding:4px 8px;background:#0b122a}
+    .row .right{margin-left:auto}
+    input[type="text"]{flex:1;min-width:220px;border-radius:10px;border:1px solid #2a3565;background:#0f1530;color:#e8edf5;padding:10px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>FR → EN • Machine Translation</h1>
+
+      <div class="row">
+        <label class="pill">API</label>
+        <input id="api" type="text" value="http://localhost:8000/translate" />
+        <button id="ping">Tester l’API</button>
+      </div>
+
+      <label for="src">Texte source (FR)</label>
+      <textarea id="src">new jersey est parfois calme</textarea>
+
+      <div class="row">
+        <button id="go">Traduire <span id="spin" class="spinner" style="display:none"></span></button>
+        <div class="right hint">Astuce : Ctrl/Cmd+Enter pour traduire</div>
+      </div>
+
+      <label for="dst" style="margin-top:14px;">Traduction (EN)</label>
+      <div id="dst" class="out"></div>
+
+      <div id="meta" class="meta" style="display:none;">
+        <div>Moteur : <code id="engine"></code></div>
+        <div>Fallback : <code id="reason"></code></div>
+        <div>unk_rate : <code id="unk"></code></div>
+        <div>len_ratio : <code id="lenr"></code></div>
+        <div>avg_logprob : <code id="avg"></code></div>
+        <div>cum_logprob : <code id="cum"></code></div>
+      </div>
+
+      <div id="err" class="hint err" style="display:none;"></div>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const go = $("go"), spin = $("spin"), dst = $("dst"), src = $("src"),
+          api = $("api"), meta = $("meta"), err = $("err");
+
+    function setBusy(b){
+      go.disabled = b; spin.style.display = b ? "inline-block" : "none";
+    }
+
+    async function callAPI(text){
+      const url = api.value.trim();
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ text })
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      return res.json();
+    }
+
+    function showResult(data){
+      dst.textContent = data.translation || "";
+      $("engine").textContent = data.engine ?? "—";
+      $("reason").textContent = data.fallback_reason ?? "—";
+      const m = data.metrics || {};
+      $("unk").textContent  = (m.unk_rate ?? 0).toFixed(3);
+      $("lenr").textContent = (m.len_ratio ?? 0).toFixed(3);
+      $("avg").textContent  = (m.avg_logprob ?? 0).toFixed(3);
+      $("cum").textContent  = (m.cum_logprob ?? 0).toFixed(3);
+      meta.style.display = "flex";
+      err.style.display = "none";
+    }
+
+    function showError(e){
+      err.textContent = e.message || String(e);
+      err.style.display = "block";
+      meta.style.display = "none";
+      dst.textContent = "";
+    }
+
+    go.addEventListener("click", async () => {
+      const text = src.value.trim();
+      if (!text) return;
+      setBusy(true);
+      try { showResult(await callAPI(text)); }
+      catch(e){ showError(e); }
+      finally{ setBusy(false); }
+    });
+
+    // Ctrl/Cmd+Enter pour lancer
+    src.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") go.click();
+    });
+
+    // Test API (ping simple)
+    $("ping").addEventListener("click", async ()=>{
+      setBusy(true);
+      try {
+        const r = await callAPI("ping de test");
+        showResult(r);
+      } catch(e){ showError(e); }
+      finally { setBusy(false); }
+    });
+  </script>
+</body>
+</html>
